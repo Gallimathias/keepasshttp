@@ -305,11 +305,13 @@ namespace KeePassHttp
                         {
                             f.Icon = win.Icon;
                             f.Plugin = this;
-                            f.Entries = (from e in items where filter(e.Entry) select e.Entry).ToList();
+                            f.Entries = items.Where(e => filter(e.Entry)).Select(e => e.Entry).ToList();
                             //f.Entries = needPrompting.ToList();
+                            f.StartPosition = win.Visible ? FormStartPosition.CenterParent : FormStartPosition.CenterScreen;
                             f.Host = submithost ?? host;
-                            f.Load += delegate { f.Activate(); };
+                            f.Load += (s, e) => f.Activate();
                             f.ShowDialog(win);
+
                             if (f.Remember && (f.Allowed || f.Denied))
                             {
                                 foreach (var e in needPrompting)
