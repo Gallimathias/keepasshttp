@@ -120,11 +120,16 @@ namespace KeePassHttp
             string formHost, searchHost, submitUrl;
             formHost = searchHost = GetHost(url);
             string hostScheme = GetScheme(url);
-            
+
             if (request.SubmitUrl != null)
-                submitHost = GetHost(CryptoTransform(request.SubmitUrl, true, false, aes, CMode.DECRYPT));
-            else            
+            {
+                submitUrl = request.SubmitUrl;
+                submitHost = GetHost(CryptoTransform(submitUrl, true, false, aes, CMode.DECRYPT));
+            }
+            else
+            {
                 submitUrl = url;
+            }
 
             if (request.Realm != null)
                 realm = CryptoTransform(request.Realm, true, false, aes, CMode.DECRYPT);
@@ -172,65 +177,14 @@ namespace KeePassHttp
                 searchHost = searchHost.Substring(searchHost.IndexOf(".") + 1);
             } while (searchHost.IndexOf(".") != -1);
 
-            bool hideExpired(PwEntry e)
-            {
-                var title = e.Strings.ReadSafe(PwDefs.TitleField);
-                var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
-                var c = GetEntryConfig(e);
-                if (c != null && c.RegExp != null)
-                {
-                    try
-                    {
-                        return Regex.IsMatch(submitUrl, c.RegExp);
-                    }
-                    catch (Exception)
-                    {
-                        //ignore invalid pattern
-                    }
-                }
-                else
-                {
-                    bool found = false;
-                    foreach (string hostNameRegExp in hostNameRegExps)
-                    {
-                        if (Regex.IsMatch(e.Strings.ReadSafe("URL"), hostNameRegExp) || Regex.IsMatch(e.Strings.ReadSafe("Title"), hostNameRegExp) || Regex.IsMatch(e.Strings.ReadSafe("Notes"), hostNameRegExp))
-                        {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if(!found)
-                        return false;
-                }
-
-                if (c != null)
-                {
-                    if (c.Allow.Contains(formHost) && (submitHost == null || c.Allow.Contains(submitHost)))
-                        return true;
-                    if (c.Deny.Contains(formHost) || (submitHost != null && c.Deny.Contains(submitHost)))
-                        return false;
-                    if (realm != null && c.Realm != realm)
-                        return false;
-                }
-
-                if (e.Expires && (e.ExpiryTime <= dtNow))
-                    return false;
-
-                if (title.StartsWith("http://") || title.StartsWith("https://") || title.StartsWith("ftp://") || title.StartsWith("sftp://"))
-                {
-                    if (formHost.EndsWith( GetHost(title)))
-                        return true;
-                }
-                return formHost.Contains(title) || (entryUrl != null && entryUrl != "" && formHost.Contains(entryUrl));
-            };
+            bool hideExpired(PwEntry e) => e.Expires && e.ExpiryTime <= DateTime.UtcNow;
 
             if (configOpt.MatchSchemes)
                 return listResult.Where(e => GetFilterShemes(e.Entry, hostScheme));
             else if (configOpt.HideExpired)
                 return listResult.Where(e => hideExpired(e.Entry));
             else
-                return listResult.Where(e => GetFilter(e.Entry, submitHost, realm, formHost));
+                return listResult.Where(e => GetFilter(e.Entry, submitHost, realm, formHost, submitUrl, hostNameRegExps));
         }
 
         private bool GetFilterShemes(PwEntry e, string hostScheme)
@@ -249,45 +203,62 @@ namespace KeePassHttp
             return GetScheme(title) == hostScheme;
         }
 
-        private bool GetFilter(PwEntry e, string submitHost, string realm, string formHost)
+        private bool GetFilter(PwEntry e, string submitHost, string realm, string formHost, string submitUrl, List<string> hostNameRegExps)
         {
             var title = e.Strings.ReadSafe(PwDefs.TitleField);
             var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
-
             var c = GetEntryConfig(e);
-
+            if (c != null && c.RegExp != null)
+            {
+                try
+                {
+                    return Regex.IsMatch(submitUrl, c.RegExp);
+                }
+                catch (Exception)
+                {
+                    //ignore invalid pattern
+                }
+            }
+            else
+            {
+                bool found = false;
+                foreach (string hostNameRegExp in hostNameRegExps)
+                {
+                    if (Regex.IsMatch(e.Strings.ReadSafe("URL"), hostNameRegExp) || Regex.IsMatch(e.Strings.ReadSafe("Title"), hostNameRegExp) || Regex.IsMatch(e.Strings.ReadSafe("Notes"), hostNameRegExp))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return false;
+                }
+            }
             if (c != null)
             {
                 if (c.Allow.Contains(formHost) && (submitHost == null || c.Allow.Contains(submitHost)))
                     return true;
-
                 if (c.Deny.Contains(formHost) || (submitHost != null && c.Deny.Contains(submitHost)))
                     return false;
-
                 if (realm != null && c.Realm != realm)
                     return false;
             }
 
-            if (entryUrl != null &&
-                (entryUrl.StartsWith("http://") ||
-                entryUrl.StartsWith("https://") ||
-                title.StartsWith("ftp://") ||
-                title.StartsWith("sftp://")))
+            if (entryUrl != null && (entryUrl.StartsWith("http://") || entryUrl.StartsWith("https://") || title.StartsWith("ftp://") || title.StartsWith("sftp://")))
             {
-                if (formHost.EndsWith(GetHost(entryUrl)))
+                var uHost = GetHost(entryUrl);
+                if (formHost.EndsWith(uHost))
                     return true;
             }
 
-            if (title.StartsWith("http://") ||
-                title.StartsWith("https://") ||
-                title.StartsWith("ftp://") ||
-                title.StartsWith("sftp://"))
+            if (title.StartsWith("http://") || title.StartsWith("https://") || title.StartsWith("ftp://") || title.StartsWith("sftp://"))
             {
-                if (formHost.EndsWith(GetHost(title)))
+                var uHost = GetHost(title);
+                if (formHost.EndsWith(uHost))
                     return true;
             }
-
-            return formHost.Contains(title) || (entryUrl != null && formHost.Contains(entryUrl));
+            return formHost.Contains(title) || (entryUrl != null && entryUrl != "" && formHost.Contains(entryUrl));
         }
 
         private void GetLoginsCountHandler(Request request, Response response, Aes aes)
@@ -399,7 +370,7 @@ namespace KeePassHttp
                         entryUrl = entryDatabase.Entry.Strings.ReadSafe(PwDefs.TitleField);
 
                     entryUrl = entryUrl.ToLower();
-                    var c = GetEntryConfig(entryDatabase.entry);
+                    var c = GetEntryConfig(entryDatabase.Entry);
                     ulong lDistance = (ulong)LevenshteinDistance(compareToUrl, entryUrl);
 
                     //if the entry contains a matching RegExp get the matching part and calculate the minimal LevenshteinDistance metween the matches 
@@ -407,11 +378,11 @@ namespace KeePassHttp
                     {
                         try
                         {
-                            foreach(Match match in Regex.Matches(compareToUrl, c.RegExp))
+                            foreach (Match match in Regex.Matches(compareToUrl, c.RegExp))
                             {
-                                ulong matchDistance = (ulong)LevenshteinDistance(compareToUrl, match.Value); 
+                                ulong matchDistance = (ulong)LevenshteinDistance(compareToUrl, match.Value);
 
-                                if(matchDistance < lDistance)
+                                if (matchDistance < lDistance)
                                     lDistance = matchDistance;
                             }
                         }
@@ -420,7 +391,7 @@ namespace KeePassHttp
                             //ignore invalid pattern and fall back to the distance to entryUrl
                         }
                     }
-                    entryDatabase.entry.UsageCount = lDistance;
+                    entryDatabase.Entry.UsageCount = lDistance;
 
                 }
 

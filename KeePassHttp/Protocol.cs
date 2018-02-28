@@ -222,15 +222,18 @@ namespace KeePassHttp
 
     public class KeePassHttpEntryConfig
     {
-        public HashSet<string> Allow;
-        public HashSet<string> Deny;
-        public string Realm;
+        public HashSet<string> Allow { get; internal set; }
+        public HashSet<string> Deny { get; internal set; }
+        public string RegExp { get; internal set; }
+        public string Realm { get; internal set; }
 
         public KeePassHttpEntryConfig()
         {
             Allow = new HashSet<string>();
             Deny = new HashSet<string>();
             Realm = null;
+            RegExp = null;
         }
+
     }
 }
