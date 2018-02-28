@@ -20,8 +20,10 @@ using KeePass;
 using KeePassLib.Cryptography.PasswordGenerator;
 using KeePassLib.Cryptography;
 using KeePass.Util.Spr;
+using KeePass.Forms;
 
-namespace KeePassHttp {
+namespace KeePassHttp
+{
     public sealed partial class KeePassHttpExt : Plugin
     {
         private string GetHost(string uri)
@@ -59,16 +61,14 @@ namespace KeePassHttp {
             return scheme;
         }
 
-        private bool canShowBalloonTips()
+        private bool CanShowBalloonTips()
         {
             // tray icon is not visible --> no balloon tips for it
             if (Program.Config.UI.TrayIcon.ShowOnlyIfTrayed && !host.MainWindow.IsTrayed())
-            {
                 return false;
-            }
 
             // only use balloon tips on windows machines
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT || Environment.OSVersion.Platform == System.PlatformID.Win32S || Environment.OSVersion.Platform == System.PlatformID.Win32Windows)
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT || Environment.OSVersion.Platform == PlatformID.Win32S || Environment.OSVersion.Platform == PlatformID.Win32Windows)
             {
                 int enabledBalloonTipsMachine = (int)Registry.GetValue("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
                         "EnableBalloonTips",
@@ -82,32 +82,28 @@ namespace KeePassHttp {
             return false;
         }
 
-        private void GetAllLoginsHandler(Request r, Response resp, Aes aes)
+        private void GetAllLoginsHandler(Request request, Response response, Aes aes)
         {
-            if (!VerifyRequest(r, aes))
+            if (!VerifyRequest(request, aes))
                 return;
 
             var list = new PwObjectList<PwEntry>();
-
             var root = host.Database.RootGroup;
-
             var parms = MakeSearchParameters();
 
             parms.SearchString = @"^[A-Za-z0-9:/-]+\.[A-Za-z0-9:/-]+$"; // match anything looking like a domain or url
 
             root.SearchEntries(parms, list);
+
             foreach (var entry in list)
-            {
-                var name = entry.Strings.ReadSafe(PwDefs.TitleField);
-                var login = GetUserPass(entry)[0];
-                var uuid = entry.Uuid.ToHexString();
-                var e = new ResponseEntry(name, login, null, uuid, null);
-                resp.Entries.Add(e);
-            }
-            resp.Success = true;
-            resp.Id = r.Id;
-            SetResponseVerifier(resp, aes);
-            foreach (var entry in resp.Entries)
+                response.Entries.Add(
+                    new ResponseEntry(entry.Strings.ReadSafe(PwDefs.TitleField), GetUserPass(entry)[0], null, entry.Uuid.ToHexString(), null));
+
+            response.Success = true;
+            response.Id = request.Id;
+            SetResponseVerifier(response, aes);
+
+            foreach (var entry in response.Entries)
             {
                 entry.Name = CryptoTransform(entry.Name, false, true, aes, CMode.ENCRYPT);
                 entry.Login = CryptoTransform(entry.Login, false, true, aes, CMode.ENCRYPT);
@@ -115,39 +111,37 @@ namespace KeePassHttp {
             }
         }
 
-        private IEnumerable<PwEntryDatabase> FindMatchingEntries(Request r, Aes aes)
+        private IEnumerable<PwEntryDatabase> FindMatchingEntries(Request request, Aes aes)
         {
             string submitHost = null;
             string realm = null;
             var listResult = new List<PwEntryDatabase>();
-            var url = CryptoTransform(r.Url, true, false, aes, CMode.DECRYPT);
+            var url = CryptoTransform(request.Url, true, false, aes, CMode.DECRYPT);
             string formHost, searchHost, submitUrl;
             formHost = searchHost = GetHost(url);
             string hostScheme = GetScheme(url);
-            if (r.SubmitUrl != null) {
-                submitUrl = CryptoTransform(r.SubmitUrl, true, false, aes, CMode.DECRYPT);
-                submitHost = GetHost(submitUrl);
-            } else
-            {
+            
+            if (request.SubmitUrl != null)
+                submitHost = GetHost(CryptoTransform(request.SubmitUrl, true, false, aes, CMode.DECRYPT));
+            else            
                 submitUrl = url;
-            }
-            if (r.Realm != null)
-                realm = CryptoTransform(r.Realm, true, false, aes, CMode.DECRYPT);
+
+            if (request.Realm != null)
+                realm = CryptoTransform(request.Realm, true, false, aes, CMode.DECRYPT);
 
             var origSearchHost = searchHost;
             var parms = MakeSearchParameters();
 
             List<PwDatabase> listDatabases = new List<PwDatabase>();
 
-            var configOpt = new ConfigOpt(this.host.CustomConfig);
+            var configOpt = new ConfigOpt(host.CustomConfig);
+
             if (configOpt.SearchInAllOpenedDatabases)
             {
                 foreach (PwDocument doc in host.MainWindow.DocumentManager.Documents)
                 {
                     if (doc.Database.IsOpen)
-                    {
                         listDatabases.Add(doc.Database);
-                    }
                 }
             }
             else
@@ -156,15 +150,16 @@ namespace KeePassHttp {
             }
 
             int listCount = 0;
+
             foreach (PwDatabase db in listDatabases)
             {
                 parms.SearchString = ".*";
                 var listEntries = new PwObjectList<PwEntry>();
                 db.RootGroup.SearchEntries(parms, listEntries);
+
                 foreach (var le in listEntries)
-                {
                     listResult.Add(new PwEntryDatabase(le, db));
-                }
+
                 listCount = listResult.Count;
             }
 
@@ -177,7 +172,7 @@ namespace KeePassHttp {
                 searchHost = searchHost.Substring(searchHost.IndexOf(".") + 1);
             } while (searchHost.IndexOf(".") != -1);
 
-            Func<PwEntry, bool> filter = delegate(PwEntry e)
+            bool hideExpired(PwEntry e)
             {
                 var title = e.Strings.ReadSafe(PwDefs.TitleField);
                 var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
@@ -204,11 +199,11 @@ namespace KeePassHttp {
                             break;
                         }
                     }
+
                     if(!found)
-                    {
                         return false;
-                    }
                 }
+
                 if (c != null)
                 {
                     if (c.Allow.Contains(formHost) && (submitHost == null || c.Allow.Contains(submitHost)))
@@ -219,108 +214,120 @@ namespace KeePassHttp {
                         return false;
                 }
 
-                if (entryUrl != null && (entryUrl.StartsWith("http://") || entryUrl.StartsWith("https://") || title.StartsWith("ftp://") || title.StartsWith("sftp://")))
-                {
-                    var uHost = GetHost(entryUrl);
-                    if (formHost.EndsWith(uHost))
-                        return true;
-                }
+                if (e.Expires && (e.ExpiryTime <= dtNow))
+                    return false;
 
                 if (title.StartsWith("http://") || title.StartsWith("https://") || title.StartsWith("ftp://") || title.StartsWith("sftp://"))
                 {
-                    var uHost = GetHost(title);
-                    if (formHost.EndsWith(uHost))
+                    if (formHost.EndsWith( GetHost(title)))
                         return true;
                 }
                 return formHost.Contains(title) || (entryUrl != null && entryUrl != "" && formHost.Contains(entryUrl));
             };
 
-            Func<PwEntry, bool> filterSchemes = delegate(PwEntry e)
-            {
-                var title = e.Strings.ReadSafe(PwDefs.TitleField);
-                var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
-
-                if (entryUrl != null)
-                {
-                    var entryScheme = GetScheme(entryUrl);
-                    if (entryScheme == hostScheme)
-                    {
-                        return true;
-                    }
-                }
-
-                var titleScheme = GetScheme(title);
-                if (titleScheme == hostScheme)
-                {
-                    return true;
-                }
-
-                return false;
-            };
-
-            var result = from e in listResult where filter(e.entry) select e;
-
             if (configOpt.MatchSchemes)
-            {
-                result = from e in result where filterSchemes(e.entry) select e;
-            }
-
-            Func<PwEntry, bool> hideExpired = delegate(PwEntry e)
-            {
-                DateTime dtNow = DateTime.UtcNow;
-
-                if(e.Expires && (e.ExpiryTime <= dtNow))
-                {
-                    return false;
-                }
-
-                return true;
-            };
-
-            if (configOpt.HideExpired)
-            {
-                result = from e in result where hideExpired(e.entry) select e;
-            }
-
-            return result;
+                return listResult.Where(e => GetFilterShemes(e.Entry, hostScheme));
+            else if (configOpt.HideExpired)
+                return listResult.Where(e => hideExpired(e.Entry));
+            else
+                return listResult.Where(e => GetFilter(e.Entry, submitHost, realm, formHost));
         }
 
-        private void GetLoginsCountHandler(Request r, Response resp, Aes aes)
+        private bool GetFilterShemes(PwEntry e, string hostScheme)
         {
-            if (!VerifyRequest(r, aes))
+            var title = e.Strings.ReadSafe(PwDefs.TitleField);
+            var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
+
+            if (entryUrl != null)
+            {
+                var entryScheme = GetScheme(entryUrl);
+
+                if (entryScheme == hostScheme)
+                    return true;
+            }
+
+            return GetScheme(title) == hostScheme;
+        }
+
+        private bool GetFilter(PwEntry e, string submitHost, string realm, string formHost)
+        {
+            var title = e.Strings.ReadSafe(PwDefs.TitleField);
+            var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
+
+            var c = GetEntryConfig(e);
+
+            if (c != null)
+            {
+                if (c.Allow.Contains(formHost) && (submitHost == null || c.Allow.Contains(submitHost)))
+                    return true;
+
+                if (c.Deny.Contains(formHost) || (submitHost != null && c.Deny.Contains(submitHost)))
+                    return false;
+
+                if (realm != null && c.Realm != realm)
+                    return false;
+            }
+
+            if (entryUrl != null &&
+                (entryUrl.StartsWith("http://") ||
+                entryUrl.StartsWith("https://") ||
+                title.StartsWith("ftp://") ||
+                title.StartsWith("sftp://")))
+            {
+                if (formHost.EndsWith(GetHost(entryUrl)))
+                    return true;
+            }
+
+            if (title.StartsWith("http://") ||
+                title.StartsWith("https://") ||
+                title.StartsWith("ftp://") ||
+                title.StartsWith("sftp://"))
+            {
+                if (formHost.EndsWith(GetHost(title)))
+                    return true;
+            }
+
+            return formHost.Contains(title) || (entryUrl != null && formHost.Contains(entryUrl));
+        }
+
+        private void GetLoginsCountHandler(Request request, Response response, Aes aes)
+        {
+            if (!VerifyRequest(request, aes))
                 return;
 
-            resp.Success = true;
-            resp.Id = r.Id;
-            var items = FindMatchingEntries(r, aes);
-            SetResponseVerifier(resp, aes);
-            resp.Count = items.ToList().Count;
+            response.Success = true;
+            response.Id = request.Id;
+            SetResponseVerifier(response, aes);
+            response.Count = FindMatchingEntries(request, aes).ToList().Count;
         }
 
-        private void GetLoginsHandler(Request r, Response resp, Aes aes)
+        private void GetLoginsHandler(Request request, Response response, Aes aes)
         {
-            if (!VerifyRequest(r, aes))
+            if (!VerifyRequest(request, aes))
                 return;
 
             string submithost = null;
-            var host = GetHost(CryptoTransform(r.Url, true, false, aes, CMode.DECRYPT));
-            if (r.SubmitUrl != null)
-                submithost = GetHost(CryptoTransform(r.SubmitUrl, true, false, aes, CMode.DECRYPT));
+            var host = GetHost(CryptoTransform(request.Url, true, false, aes, CMode.DECRYPT));
 
-            var items = FindMatchingEntries(r, aes);
+            if (request.SubmitUrl != null)
+                submithost = GetHost(CryptoTransform(request.SubmitUrl, true, false, aes, CMode.DECRYPT));
+
+            var items = FindMatchingEntries(request, aes);
             if (items.ToList().Count > 0)
             {
-                Func<PwEntry, bool> filter = delegate(PwEntry e)
+                bool filter(PwEntry e)
                 {
                     var c = GetEntryConfig(e);
 
                     var title = e.Strings.ReadSafe(PwDefs.TitleField);
                     var entryUrl = e.Strings.ReadSafe(PwDefs.UrlField);
+
                     if (c != null)
-                    {
-                        return title != host && entryUrl != host && !c.Allow.Contains(host) || (submithost != null && !c.Allow.Contains(submithost) && submithost != title && submithost != entryUrl);
-                    }
-                    return title != host && entryUrl != host || (submithost != null && title != submithost && entryUrl != submithost);
+                        return title != host && entryUrl != host && !c.Allow.Contains(host) ||
+                            (submithost != null && !c.Allow.Contains(submithost) && submithost != title && submithost != entryUrl);
+
+                    return title != host && entryUrl != host ||
+                        (submithost != null && title != submithost && entryUrl != submithost);
                 };
 
                 var configOpt = new ConfigOpt(this.host.CustomConfig);
@@ -328,7 +335,7 @@ namespace KeePassHttp {
                 var autoAllowS = config.Strings.ReadSafe("Auto Allow");
                 var autoAllow = autoAllowS != null && autoAllowS.Trim() != "";
                 autoAllow = autoAllow || configOpt.AlwaysAllowAccess;
-                var needPrompting = from e in items where filter(e.entry) select e;
+                var needPrompting = from e in items where filter(e.Entry) select e;
 
                 if (needPrompting.ToList().Count > 0 && !autoAllow)
                 {
@@ -340,23 +347,29 @@ namespace KeePassHttp {
                         {
                             f.Icon = win.Icon;
                             f.Plugin = this;
-                            f.Entries = (from e in items where filter(e.entry) select e.entry).ToList();
+                            f.Entries = items.Where(e => filter(e.Entry)).Select(e => e.Entry).ToList();
                             //f.Entries = needPrompting.ToList();
-                            f.Host = submithost != null ? submithost : host;
-                            f.Load += delegate { f.Activate(); };
+                            f.StartPosition = win.Visible ? FormStartPosition.CenterParent : FormStartPosition.CenterScreen;
+                            f.Host = submithost ?? host;
+                            f.Load += (s, e) => f.Activate();
                             f.ShowDialog(win);
+
                             if (f.Remember && (f.Allowed || f.Denied))
                             {
                                 foreach (var e in needPrompting)
                                 {
-                                    var c = GetEntryConfig(e.entry);
+                                    var c = GetEntryConfig(e.Entry);
+
                                     if (c == null)
                                         c = new KeePassHttpEntryConfig();
+
                                     var set = f.Allowed ? c.Allow : c.Deny;
                                     set.Add(host);
+
                                     if (submithost != null && submithost != host)
                                         set.Add(submithost);
-                                    SetEntryConfig(e.entry, c);
+
+                                    SetEntryConfig(e.Entry, c);
 
                                 }
                             }
@@ -369,20 +382,21 @@ namespace KeePassHttp {
                 }
 
                 string compareToUrl = null;
-                if (r.SubmitUrl != null)
-                {
-                    compareToUrl = CryptoTransform(r.SubmitUrl, true, false, aes, CMode.DECRYPT);
-                }
-                if(String.IsNullOrEmpty(compareToUrl))
-                    compareToUrl = CryptoTransform(r.Url, true, false, aes, CMode.DECRYPT);
+
+                if (request.SubmitUrl != null)
+                    compareToUrl = CryptoTransform(request.SubmitUrl, true, false, aes, CMode.DECRYPT);
+
+                if (String.IsNullOrEmpty(compareToUrl))
+                    compareToUrl = CryptoTransform(request.Url, true, false, aes, CMode.DECRYPT);
 
                 compareToUrl = compareToUrl.ToLower();
 
                 foreach (var entryDatabase in items)
                 {
-                    string entryUrl = String.Copy(entryDatabase.entry.Strings.ReadSafe(PwDefs.UrlField));
-                    if (String.IsNullOrEmpty(entryUrl))
-                        entryUrl = entryDatabase.entry.Strings.ReadSafe(PwDefs.TitleField);
+                    string entryUrl = string.Copy(entryDatabase.Entry.Strings.ReadSafe(PwDefs.UrlField));
+
+                    if (string.IsNullOrWhiteSpace(entryUrl))
+                        entryUrl = entryDatabase.Entry.Strings.ReadSafe(PwDefs.TitleField);
 
                     entryUrl = entryUrl.ToLower();
                     var c = GetEntryConfig(entryDatabase.entry);
@@ -393,14 +407,12 @@ namespace KeePassHttp {
                     {
                         try
                         {
-                            MatchCollection matches = Regex.Matches(compareToUrl, c.RegExp);
-                            foreach(Match match in matches)
+                            foreach(Match match in Regex.Matches(compareToUrl, c.RegExp))
                             {
                                 ulong matchDistance = (ulong)LevenshteinDistance(compareToUrl, match.Value); 
+
                                 if(matchDistance < lDistance)
-                                {
                                     lDistance = matchDistance;
-                                }
                             }
                         }
                         catch (Exception)
@@ -416,52 +428,33 @@ namespace KeePassHttp {
 
                 if (configOpt.SpecificMatchingOnly)
                 {
-                    itemsList = (from e in itemsList 
-                                 orderby e.entry.UsageCount ascending 
-                                 select e).ToList();
+                    ulong lowestDistance = itemsList.Count > 0 ? itemsList.Min(e => e.Entry.UsageCount) : 0;
 
-                    ulong lowestDistance = itemsList.Count > 0 ?
-                        itemsList[0].entry.UsageCount :
-                        0;
-
-                    itemsList = (from e in itemsList
-                                 where e.entry.UsageCount == lowestDistance
-                                 orderby e.entry.UsageCount
-                                 select e).ToList();
-                    
+                    itemsList = itemsList.Where(e => e.Entry.UsageCount == lowestDistance).ToList();
                 }
 
                 if (configOpt.SortResultByUsername)
-                {
-                    var items2 = from e in itemsList orderby e.entry.UsageCount ascending, GetUserPass(e)[0] ascending select e;
-                    itemsList = items2.ToList();
-                }
+                    itemsList = itemsList.OrderBy(e => e.Entry.UsageCount).ThenBy(e => GetUserPass(e)[0]).ToList();
                 else
-                {
-                    var items2 = from e in itemsList orderby e.entry.UsageCount ascending, e.entry.Strings.ReadSafe(PwDefs.TitleField) ascending select e;
-                    itemsList = items2.ToList();
-                }
+                    itemsList = itemsList.OrderBy(e => e.Entry.UsageCount).ThenBy(e => e.Entry.Strings.ReadSafe(PwDefs.TitleField)).ToList();
 
                 foreach (var entryDatabase in itemsList)
                 {
                     var e = PrepareElementForResponseEntries(configOpt, entryDatabase);
-                    resp.Entries.Add(e);
+                    response.Entries.Add(e);
                 }
 
                 if (itemsList.Count > 0)
-                {
-                    var names = (from e in resp.Entries select e.Name).Distinct<string>();
-                    var n = String.Join("\n    ", names.ToArray<string>());
-
                     if (configOpt.ReceiveCredentialNotification)
-                        ShowNotification(String.Format("{0}: {1} is receiving credentials for:\n    {2}", r.Id, host, n));
-                }
+                        ShowNotification(String.Format("{0}: {1} is receiving credentials for:\n    {2}", request.Id, host, string.Join(
+                            "\n    ", response.Entries.Select(e => e.Name).Distinct())));
 
-                resp.Success = true;
-                resp.Id = r.Id;
-                SetResponseVerifier(resp, aes);
 
-                foreach (var entry in resp.Entries)
+                response.Success = true;
+                response.Id = request.Id;
+                SetResponseVerifier(response, aes);
+
+                foreach (var entry in response.Entries)
                 {
                     entry.Name = CryptoTransform(entry.Name, false, true, aes, CMode.ENCRYPT);
                     entry.Login = CryptoTransform(entry.Login, false, true, aes, CMode.ENCRYPT);
@@ -478,24 +471,28 @@ namespace KeePassHttp {
                     }
                 }
 
-                resp.Count = resp.Entries.Count;
+                response.Count = response.Entries.Count;
             }
             else
             {
-                resp.Success = true;
-                resp.Id = r.Id;
-                SetResponseVerifier(resp, aes);
+                response.Success = true;
+                response.Id = request.Id;
+                SetResponseVerifier(response, aes);
             }
         }
         //http://en.wikibooks.org/wiki/Algorithm_Implementation/Strings/Levenshtein_distance#C.23
         private int LevenshteinDistance(string source, string target)
         {
-            if (String.IsNullOrEmpty(source))
+            if (string.IsNullOrEmpty(source))
             {
-                if (String.IsNullOrEmpty(target)) return 0;
+                if (string.IsNullOrEmpty(target))
+                    return 0;
+
                 return target.Length;
             }
-            if (String.IsNullOrEmpty(target)) return source.Length;
+
+            if (string.IsNullOrEmpty(target))
+                return source.Length;
 
             if (source.Length > target.Length)
             {
@@ -508,7 +505,8 @@ namespace KeePassHttp {
             var n = source.Length;
             var distance = new int[2, m + 1];
             // Initialize the distance 'matrix'
-            for (var j = 1; j <= m; j++) distance[0, j] = j;
+            for (var j = 1; j <= m; j++)
+                distance[0, j] = j;
 
             var currentRow = 0;
             for (var i = 1; i <= n; ++i)
@@ -518,43 +516,41 @@ namespace KeePassHttp {
                 var previousRow = currentRow ^ 1;
                 for (var j = 1; j <= m; j++)
                 {
-                    var cost = (target[j - 1] == source[i - 1] ? 0 : 1);
+                    var cost = target[j - 1] == source[i - 1] ? 0 : 1;
                     distance[currentRow, j] = Math.Min(Math.Min(
                                             distance[previousRow, j] + 1,
                                             distance[currentRow, j - 1] + 1),
                                             distance[previousRow, j - 1] + cost);
                 }
             }
+
             return distance[currentRow, m];
         }
 
         private ResponseEntry PrepareElementForResponseEntries(ConfigOpt configOpt, PwEntryDatabase entryDatabase)
         {
-            SprContext ctx = new SprContext(entryDatabase.entry, entryDatabase.database, SprCompileFlags.All, false, false);
+            SprContext ctx = new SprContext(entryDatabase.Entry, entryDatabase.Database, SprCompileFlags.All, false, false);
 
-            var name = entryDatabase.entry.Strings.ReadSafe(PwDefs.TitleField);
+            var name = entryDatabase.Entry.Strings.ReadSafe(PwDefs.TitleField);
             var loginpass = GetUserPass(entryDatabase, ctx);
             var login = loginpass[0];
             var passwd = loginpass[1];
-            var uuid = entryDatabase.entry.Uuid.ToHexString();
+            var uuid = entryDatabase.Entry.Uuid.ToHexString();
 
             List<ResponseStringField> fields = null;
             if (configOpt.ReturnStringFields)
             {
                 fields = new List<ResponseStringField>();
-                foreach (var sf in entryDatabase.entry.Strings)
+
+                foreach (var sf in entryDatabase.Entry.Strings)
                 {
-                    var sfValue = entryDatabase.entry.Strings.ReadSafe(sf.Key);
-                    
                     // follow references
-                    sfValue = SprEngine.Compile(sfValue, ctx);
+                    var sfValue = SprEngine.Compile(entryDatabase.Entry.Strings.ReadSafe(sf.Key), ctx);
 
                     if (configOpt.ReturnStringFieldsWithKphOnly)
                     {
                         if (sf.Key.StartsWith("KPH: "))
-                        {
                             fields.Add(new ResponseStringField(sf.Key.Substring(5), sfValue));
-                        }
                     }
                     else
                     {
@@ -563,155 +559,142 @@ namespace KeePassHttp {
                 }
 
                 if (fields.Count > 0)
-                {
-                    var fields2 = from e2 in fields orderby e2.Key ascending select e2;
-                    fields = fields2.ToList<ResponseStringField>();
-                }
+                    fields = fields.OrderBy(e => e.Key).ToList();
                 else
-                {
                     fields = null;
-                }
             }
 
             return new ResponseEntry(name, login, passwd, uuid, fields);
         }
 
-        private void SetLoginHandler(Request r, Response resp, Aes aes)
+        private void SetLoginHandler(Request request, Response response, Aes aes)
         {
-            if (!VerifyRequest(r, aes))
+            if (!VerifyRequest(request, aes))
                 return;
 
-            string url = CryptoTransform(r.Url, true, false, aes, CMode.DECRYPT);
+            string url = CryptoTransform(request.Url, true, false, aes, CMode.DECRYPT);
             var urlHost = GetHost(url);
 
             PwUuid uuid = null;
             string username, password;
 
-            username = CryptoTransform(r.Login, true, false, aes, CMode.DECRYPT);
-            password = CryptoTransform(r.Password, true, false, aes, CMode.DECRYPT);
-            
-            if (r.Uuid != null)
-            {
+            username = CryptoTransform(request.Login, true, false, aes, CMode.DECRYPT);
+            password = CryptoTransform(request.Password, true, false, aes, CMode.DECRYPT);
+
+            if (request.Uuid != null)
                 uuid = new PwUuid(MemUtil.HexStringToByteArray(
-                        CryptoTransform(r.Uuid, true, false, aes, CMode.DECRYPT)));
-            }
+                        CryptoTransform(request.Uuid, true, false, aes, CMode.DECRYPT)));
 
             if (uuid != null)
-            {
                 // modify existing entry
-                UpdateEntry(uuid, username, password, urlHost, r.Id);
-            }
+                UpdateEntry(uuid, username, password, urlHost, request.Id);
             else
-            {
                 // create new entry
-                CreateEntry(username, password, urlHost, url, r, aes);
-            }
+                CreateEntry(username, password, urlHost, url, request, aes);
 
-            resp.Success = true;
-            resp.Id = r.Id;
-            SetResponseVerifier(resp, aes);
+            response.Success = true;
+            response.Id = request.Id;
+            SetResponseVerifier(response, aes);
         }
 
-        private void AssociateHandler(Request r, Response resp, Aes aes)
+        private void AssociateHandler(Request request, Response response, Aes aes)
         {
-            if (!TestRequestVerifier(r, aes, r.Key))
+            if (!TestRequestVerifier(request, aes, request.Key))
                 return;
 
             // key is good, prompt user to save
-            using (var f = new ConfirmAssociationForm())
+            using (var form = new ConfirmAssociationForm())
             {
-                var win = host.MainWindow;
-                win.Invoke((MethodInvoker)delegate
-                {
-                    f.Activate();
-                    f.Icon = win.Icon;
-                    f.Key = r.Key;
-                    f.Load += delegate { f.Activate(); };
-                    f.ShowDialog(win);
-
-                    if (f.KeyId != null)
-                    {
-                        var entry = GetConfigEntry(true);
-
-                        bool keyNameExists = true;
-                        while (keyNameExists)
-                        {
-                            DialogResult keyExistsResult = DialogResult.Yes;
-                            foreach (var s in entry.Strings)
-                            {
-                                if (s.Key == ASSOCIATE_KEY_PREFIX + f.KeyId)
-                                {
-                                    keyExistsResult = MessageBox.Show(
-                                        win,
-                                        "A shared encryption-key with the name \"" + f.KeyId + "\" already exists.\nDo you want to overwrite it?",
-                                        "Overwrite existing key?",
-                                        MessageBoxButtons.YesNo,
-                                        MessageBoxIcon.Warning,
-                                        MessageBoxDefaultButton.Button1
-                                    );
-                                    break;
-                                }
-                            }
-
-                            if (keyExistsResult == DialogResult.No)
-                            {
-                                f.ShowDialog(win);
-                            }
-                            else
-                            {
-                                keyNameExists = false;
-                            }
-                        }
-
-                        if (f.KeyId != null)
-                        {
-                            entry.Strings.Set(ASSOCIATE_KEY_PREFIX + f.KeyId, new ProtectedString(true, r.Key));
-                            entry.Touch(true);
-                            resp.Id = f.KeyId;
-                            resp.Success = true;
-                            SetResponseVerifier(resp, aes);
-                            UpdateUI(null);
-                        }
-                    }
-                });
+                var window = host.MainWindow;
+                form.Activate();
+                form.Icon = window.Icon;
+                form.Key = request.Key;
+                form.Load += delegate { form.Activate(); };
+                form.ShowDialog(window);
+                window.Invoke(new MethodInvoker(() => ConfirmAssociation(request, response, aes, form, window)));
             }
         }
 
-        private void TestAssociateHandler(Request r, Response resp, Aes aes)
+        private void ConfirmAssociation(Request request, Response response, Aes aes, ConfirmAssociationForm form, MainForm win)
         {
-            if (!VerifyRequest(r, aes))
+            if (form.KeyId == null)
                 return;
 
-            resp.Success = true;
-            resp.Id = r.Id;
-            SetResponseVerifier(resp, aes);
+            var entry = GetConfigEntry(true);
+
+            bool keyNameExists = true;
+            while (keyNameExists)
+            {
+                DialogResult keyExistsResult = DialogResult.Yes;
+
+                foreach (var s in entry.Strings)
+                {
+                    if (s.Key == ASSOCIATE_KEY_PREFIX + form.KeyId)
+                    {
+                        keyExistsResult = MessageBox.Show(
+                            win,
+                            "A shared encryption-key with the name \"" + form.KeyId + "\" already exists.\nDo you want to overwrite it?",
+                            "Overwrite existing key?",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Warning,
+                            MessageBoxDefaultButton.Button1
+                        );
+                        break;
+                    }
+                }
+
+                if (keyExistsResult == DialogResult.No)
+                    form.ShowDialog(win);
+                else
+                    keyNameExists = false;
+            }
+
+            if (form.KeyId == null)
+                return;
+
+            entry.Strings.Set(ASSOCIATE_KEY_PREFIX + form.KeyId, new ProtectedString(true, request.Key));
+            entry.Touch(true);
+            response.Id = form.KeyId;
+            response.Success = true;
+            SetResponseVerifier(response, aes);
+            UpdateUI(null);
         }
 
-        private void GeneratePassword(Request r, Response resp, Aes aes)
+        private void TestAssociateHandler(Request request, Response response, Aes aes)
         {
-            if (!VerifyRequest(r, aes))
+            if (!VerifyRequest(request, aes))
+                return;
+
+            response.Success = true;
+            response.Id = request.Id;
+            SetResponseVerifier(response, aes);
+        }
+
+        private void GeneratePassword(Request request, Response response, Aes aes)
+        {
+            if (!VerifyRequest(request, aes))
                 return;
 
             byte[] pbEntropy = null;
-            ProtectedString psNew;
             PwProfile autoProfile = Program.Config.PasswordGenerator.AutoGeneratedPasswordsProfile;
-            PwGenerator.Generate(out psNew, autoProfile, pbEntropy, Program.PwGeneratorPool);
+            PwGenerator.Generate(out ProtectedString psNew, autoProfile, pbEntropy, Program.PwGeneratorPool);
 
             byte[] pbNew = psNew.ReadUtf8();
+
             if (pbNew != null)
             {
                 uint uBits = QualityEstimation.EstimatePasswordBits(pbNew);
                 ResponseEntry item = new ResponseEntry(Request.GENERATE_PASSWORD, uBits.ToString(), StrUtil.Utf8.GetString(pbNew), Request.GENERATE_PASSWORD, null);
-                resp.Entries.Add(item);
-                resp.Success = true;
-                resp.Count = 1;
+                response.Entries.Add(item);
+                response.Success = true;
+                response.Count = 1;
                 MemUtil.ZeroByteArray(pbNew);
             }
 
-            resp.Id = r.Id;
-            SetResponseVerifier(resp, aes);
+            response.Id = request.Id;
+            SetResponseVerifier(response, aes);
 
-            foreach (var entry in resp.Entries)
+            foreach (var entry in response.Entries)
             {
                 entry.Name = CryptoTransform(entry.Name, false, true, aes, CMode.ENCRYPT);
                 entry.Login = CryptoTransform(entry.Login, false, true, aes, CMode.ENCRYPT);
@@ -722,23 +705,20 @@ namespace KeePassHttp {
 
         private KeePassHttpEntryConfig GetEntryConfig(PwEntry e)
         {
-            var serializer = NewJsonSerializer();
             if (e.Strings.Exists(KEEPASSHTTP_NAME))
             {
                 var json = e.Strings.ReadSafe(KEEPASSHTTP_NAME);
                 using (var ins = new JsonTextReader(new StringReader(json)))
-                {
-                    return serializer.Deserialize<KeePassHttpEntryConfig>(ins);
-                }
+                    return NewJsonSerializer().Deserialize<KeePassHttpEntryConfig>(ins);
             }
+
             return null;
         }
 
         private void SetEntryConfig(PwEntry e, KeePassHttpEntryConfig c)
         {
-            var serializer = NewJsonSerializer();
             var writer = new StringWriter();
-            serializer.Serialize(writer, c);
+            NewJsonSerializer().Serialize(writer, c);
             e.Strings.Set(KEEPASSHTTP_NAME, new ProtectedString(false, writer.ToString()));
             e.Touch(true);
             UpdateUI(e.ParentGroup);
@@ -748,7 +728,8 @@ namespace KeePassHttp {
         {
             PwEntry entry = null;
 
-            var configOpt = new ConfigOpt(this.host.CustomConfig);
+            var configOpt = new ConfigOpt(host.CustomConfig);
+
             if (configOpt.SearchInAllOpenedDatabases)
             {
                 foreach (PwDocument doc in host.MainWindow.DocumentManager.Documents)
@@ -756,10 +737,9 @@ namespace KeePassHttp {
                     if (doc.Database.IsOpen)
                     {
                         entry = doc.Database.RootGroup.FindEntry(uuid, true);
+
                         if (entry != null)
-                        {
                             break;
-                        }
                     }
                 }
             }
@@ -769,9 +749,7 @@ namespace KeePassHttp {
             }
 
             if (entry == null)
-            {
                 return false;
-            }
 
             string[] up = GetUserPass(entry);
             var u = up[0];
@@ -804,15 +782,13 @@ namespace KeePassHttp {
 
 
                     if (result == DialogResult.Yes)
-                    {
                         allowUpdate = true;
-                    }
                 }
 
                 if (allowUpdate)
                 {
-                    PwObjectList<PwEntry> m_vHistory = entry.History.CloneDeep();
-                    entry.History = m_vHistory;
+                    PwObjectList<PwEntry> mVHistory = entry.History.CloneDeep();
+                    entry.History = mVHistory;
                     entry.CreateBackup(null);
 
                     entry.Strings.Set(PwDefs.UserNameField, new ProtectedString(false, username));
@@ -835,6 +811,7 @@ namespace KeePassHttp {
 
             var root = host.Database.RootGroup;
             var group = root.FindCreateGroup(KEEPASSHTTP_GROUP_NAME, false);
+
             if (group == null)
             {
                 group = new PwGroup(true, true, KEEPASSHTTP_GROUP_NAME, PwIcon.WorldComputer);
@@ -843,15 +820,15 @@ namespace KeePassHttp {
             }
 
             string submithost = null;
+
             if (r.SubmitUrl != null)
                 submithost = GetHost(CryptoTransform(r.SubmitUrl, true, false, aes, CMode.DECRYPT));
 
             string baseUrl = url;
+
             // index bigger than https:// <-- this slash
             if (baseUrl.LastIndexOf("/") > 9)
-            {
                 baseUrl = baseUrl.Substring(0, baseUrl.LastIndexOf("/") + 1);
-            }
 
             PwEntry entry = new PwEntry(true, true);
             entry.Strings.Set(PwDefs.TitleField, new ProtectedString(false, urlHost));

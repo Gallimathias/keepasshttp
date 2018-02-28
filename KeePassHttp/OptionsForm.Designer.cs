@@ -87,7 +87,7 @@
             this.okButton.TabIndex = 1;
             this.okButton.Text = "&Save";
             this.okButton.UseVisualStyleBackColor = true;
-            this.okButton.Click += new System.EventHandler(this.okButton_Click);
+            this.okButton.Click += new System.EventHandler(this.OkButtonClick);
             // 
             // tabControl1
             // 
@@ -175,7 +175,7 @@
             this.removePermissionsButton.TabIndex = 16;
             this.removePermissionsButton.Text = "Remo&ve all stored permissions from entries in active database";
             this.removePermissionsButton.UseVisualStyleBackColor = true;
-            this.removePermissionsButton.Click += new System.EventHandler(this.removePermissionsButton_Click);
+            this.removePermissionsButton.Click += new System.EventHandler(this.RemovePermissionsButtonClick);
             // 
             // unlockDatabaseCheckbox
             // 
@@ -197,7 +197,7 @@
             this.removeButton.TabIndex = 11;
             this.removeButton.Text = "R&emove all shared encryption-keys from active database";
             this.removeButton.UseVisualStyleBackColor = true;
-            this.removeButton.Click += new System.EventHandler(this.removeButton_Click);
+            this.removeButton.Click += new System.EventHandler(this.RemoveButtonClick);
             // 
             // credMatchingCheckbox
             // 
@@ -265,7 +265,7 @@
             this.hostName.Size = new System.Drawing.Size(103, 20);
             this.hostName.TabIndex = 25;
             this.hostName.Text = "localhost";
-            this.hostName.TextChanged += new System.EventHandler(this.hostName_TextChanged);
+            this.hostName.TextChanged += new System.EventHandler(this.SetRestartRequired);
             // 
             // label10
             // 
@@ -328,7 +328,7 @@
             0,
             0,
             0});
-            this.portNumber.ValueChanged += new System.EventHandler(this.portNumber_ValueChanged);
+            this.portNumber.ValueChanged += new System.EventHandler(this.SetRestartRequired);
             // 
             // label5
             // 
@@ -378,7 +378,7 @@
             this.returnStringFieldsCheckbox.TabIndex = 20;
             this.returnStringFieldsCheckbox.Text = "&Return also advanced string fields";
             this.returnStringFieldsCheckbox.UseVisualStyleBackColor = true;
-            this.returnStringFieldsCheckbox.CheckedChanged += new System.EventHandler(this.returnStringFieldsCheckbox_CheckedChanged);
+            this.returnStringFieldsCheckbox.CheckedChanged += new System.EventHandler(this.ReturnStringFieldsCheckboxCheckedChanged);
             // 
             // label2
             // 
@@ -446,7 +446,7 @@
             this.Name = "OptionsForm";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "KeePassHttp Options";
-            this.Load += new System.EventHandler(this.OptionsForm_Load);
+            this.Load += new System.EventHandler(this.OptionsFormLoad);
             this.tabControl1.ResumeLayout(false);
             this.tabPage1.ResumeLayout(false);
             this.tabPage1.PerformLayout();
