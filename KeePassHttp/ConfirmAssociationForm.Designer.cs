@@ -97,7 +97,7 @@
             this.Save.TabIndex = 5;
             this.Save.Text = "&Save";
             this.Save.UseVisualStyleBackColor = true;
-            this.Save.Click += new System.EventHandler(this.Save_Click);
+            this.Save.Click += new System.EventHandler(this.SaveClick);
             // 
             // Cancel
             // 
@@ -108,7 +108,7 @@
             this.Cancel.TabIndex = 6;
             this.Cancel.Text = "&Cancel";
             this.Cancel.UseVisualStyleBackColor = true;
-            this.Cancel.Click += new System.EventHandler(this.Cancel_Click);
+            this.Cancel.Click += new System.EventHandler(this.CancelClick);
             // 
             // ConfirmAssociationForm
             // 

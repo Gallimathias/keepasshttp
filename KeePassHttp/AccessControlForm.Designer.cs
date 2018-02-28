@@ -46,7 +46,7 @@
             AllowButton.TabIndex = 1;
             AllowButton.Text = "&Allow";
             AllowButton.UseVisualStyleBackColor = true;
-            AllowButton.Click += new System.EventHandler(this.AllowButton_Click);
+            AllowButton.Click += new System.EventHandler(this.AllowButtonClick);
             // 
             // DenyButton
             // 
@@ -57,7 +57,7 @@
             DenyButton.TabIndex = 2;
             DenyButton.Text = "&Deny";
             DenyButton.UseVisualStyleBackColor = true;
-            DenyButton.Click += new System.EventHandler(this.DenyButton_Click);
+            DenyButton.Click += new System.EventHandler(this.DenyButtonClick);
             // 
             // EntriesBox
             // 
